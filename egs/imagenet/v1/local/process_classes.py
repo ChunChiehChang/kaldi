@@ -41,7 +41,6 @@ if args.task < 3:
         labels_fh.write(wnid_vect[i][0][0] + ' ' + str(i) + '\n')
 else:
     for i in range(0, len(wnid_vect)):
-        labels_fh.write(wnid_vect[i][0][0] + ' '
-                        + str(int(synsets_struct[i][0][0][0][0]) - 1) + '\n')
+        labels_fh.write(wnid_vect[i][0][0] + ' ' + str(i) + '\n')
 
 labels_fh.close()

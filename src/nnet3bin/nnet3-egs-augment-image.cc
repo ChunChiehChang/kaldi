@@ -60,12 +60,12 @@ struct ImageAugmentationConfig {
   void Register(ParseOptions *po) {
     po->Register("crop", &crop, "Option to set if the input images are not square."
                  "If crop is set to true the image is randomly scaled then cropped."
-                 "The scaling is randomly so that the shortest side is"
-                 "[crop-scale-min,crop-scale-max]");
+                 "The shortest side is scaled to a random size in the range "
+                 "[crop-scale-min, crop-scale-max]");
     po->Register("crop-scale-min", &crop_scale_min, "Only used if crop is true."
                  "Scale the shortest side randomly from [scale-min,scale-max].");
-    po->Register("crop-scale-max", &crop_scale_max, "Only used if crop."
-                 "Scale the shortest side ramdomly from [scale-min,scale-max].");
+    po->Register("crop-scale-max", &crop_scale_max, "Only used if crop is true."
+                 "Scale the shortest side radomly from [scale-min,scale-max].");
     po->Register("crop-size", &crop_size, "The size of the window to crop from image after scaling.");
     po->Register("num-channels", &num_channels, "Number of colors in the image."
                  "It is important to specify this (helps interpret the image "
@@ -337,8 +337,8 @@ void ScaleAndCropImage(const ImageAugmentationConfig &config,
     scale_mat(1, 1) = (scale * 1.0) / width;
   }
 
-  int32 new_width = static_cast<int32>(floor(width * scale_mat(0, 0)));
-  int32 new_height = static_cast<int32>(floor(height * scale_mat(1, 1)));
+  int32 new_width = static_cast<int32>(round(width * scale_mat(0, 0)));
+  int32 new_height = static_cast<int32>(round(height * scale_mat(1, 1)));
   int32 start_row = RandInt(0, new_width - crop_size);
   int32 start_col = RandInt(0, new_height - crop_size);
   //int32 start_row = new_width - crop_size;

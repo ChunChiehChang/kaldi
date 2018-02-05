@@ -437,7 +437,6 @@ def compute_train_cv_probabilities(dir, iter, egs_dir, run_opts,
                                         opts=' '.join(opts), model=model,
                                         multitask_egs_opts=multitask_egs_opts,
                                         minibatch_size=compute_prob_minibatch_size_str))
->>>>>>> origin/master
 
 
 def compute_progress(dir, iter, egs_dir,

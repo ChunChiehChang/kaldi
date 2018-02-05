@@ -40,8 +40,8 @@ if [ $# != 3 ]; then
   echo "                     each iteration and for combination at the end"
   echo "                     (note: there is no data held-out from training"
   echo "                     data; we use the test or dev set for that.)"
-  echo "  --crop             false. Flag to indicate that the images are not square"
-  echo "                     They will need to be scaled and then croped."
+  echo "  --crop false       Flag to indicate that the images are not square"
+  echo "                     They will need to be scaled and then cropped."
   echo "                     The scaling is random between [scale-min,scale-max]"
   echo "  --crop-size        The size of the crop to ensure the inputs are square"
   echo "  --crop-scale-min   The shortest side of the image is scaled randomly."
@@ -77,8 +77,8 @@ mkdir -p $dir/info $dir/log
 
 paf="--print-args=false"
 num_channels=$(cat $train/num_channels)
-num_cols=$(head -n 1 $train/images.scp | feat-to-dim $paf scp:- -)
-num_rows=$(head -n 1 $train/images.scp | feat-to-len $paf scp:- ark,t:- | awk '{print $2}')
+num_cols=$(head -n 1 $test/images.scp | feat-to-dim $paf scp:- -)
+num_rows=$(head -n 1 $test/images.scp | feat-to-len $paf scp:- ark,t:- | awk '{print $2}')
 width=$num_rows
 height=$[$num_cols/$num_channels]
 # the width of the image equals $num_rows.
@@ -155,6 +155,8 @@ num_archives=$[num_train_images/egs_per_archive+1]
 if [ $stage -le 2 ]; then
   echo "$0: creating $num_archives archives of egs"
 
+  mkdir -p $dir/unshuffled_ark
+  
   image/split_image_dir.sh $train $num_archives
 
   sdata=$train/split$num_archives
@@ -163,7 +165,15 @@ if [ $stage -le 2 ]; then
        ali-to-post ark:$sdata/JOB/labels.txt ark:- \| \
        post-to-smat --dim=$num_classes ark:- ark:- \| \
        nnet3-get-egs-simple input=scp:$sdata/JOB/images.scp \
-        output=ark:- ark:$dir/egs.JOB.ark
+        output=ark:- ark:$dir/unshuffled_ark/egs.JOB.ark
+
+  egs_list=
+  out_egs_list=
+  for n in $(seq $num_archives); do
+    egs_list="$egs_list $dir/unshuffled_ark/egs.$n.ark"
+    out_egs_list="$out_egs_list ark:$dir/egs.$n.ark"
+  done
+  $cmd $dir/log/shuffle_egs.log nnet3-copy-egs "ark:cat $egs_list|" $out_egs_list
 fi
 
 rm $dir/train_subset_ids.txt 2>/dev/null || true

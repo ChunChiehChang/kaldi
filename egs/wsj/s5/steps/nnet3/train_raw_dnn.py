@@ -84,8 +84,8 @@ def get_args():
     parser.add_argument("--compute-prob-minibatch-size",
                         type=str, dest='compute_prob_minibatch_size',
                         default='1:64',
-                        help="Set the minibatch size used in computing the "
-                        "train and valid probabilities.")
+                        help="Set the minibatch size used in the "
+                        "train, valid, and combination step.")
 
     # General options
     parser.add_argument("--nj", type=int, default=4,
