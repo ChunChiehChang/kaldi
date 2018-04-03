@@ -41,7 +41,7 @@ train_data_dir=data/train
 lores_train_data_dir=$train_data_dir  # for the start, use the same data for gmm and chain
 gmm_lang=data/lang
 lang_test=data/lang_unk
-tree_dir=data/chain${nnet3_affix}/tree${affix}
+tree_dir=exp/chain${nnet3_affix}/tree${affix}
 
 # the 'lang' directory is created by this script.
 # If you create such a directory with a non-standard topology
@@ -125,7 +125,7 @@ if [ $stage -le 4 ]; then
 
   num_targets=$(tree-info $tree_dir/tree | grep num-pdfs | awk '{print $2}')
   learning_rate_factor=$(echo "print 0.5/$xent_regularize" | python)
-  common1="required-time-offsets=0 height-offsets=-2,-1,0,1,2 num-filters-out=12"
+  common1="height-offsets=-2,-1,0,1,2 num-filters-out=12"
 
   mkdir -p $dir/configs
   cat <<EOF > $dir/configs/network.xconfig
