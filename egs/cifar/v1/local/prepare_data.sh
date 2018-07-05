@@ -31,6 +31,7 @@ cp data/cifar10_{train,test}/classes.txt
 echo 3 > data/cifar10_train/num_channels
 echo 3 > data/cifar10_test/num_channels
 
+#local/process_data.py --dataset train $cifar10 data/cifar10_train
 local/process_data.py --dataset train $cifar10 data/cifar10_train/ | \
   copy-feats --compress=true --compression-method=7 \
    ark:- ark,scp:data/cifar10_train/data/images.ark,data/cifar10_train/images.scp || exit 1

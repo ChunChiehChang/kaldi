@@ -15,7 +15,7 @@ set -euo pipefail
 # training options
 stage=0
 train_stage=-10
-dataset=cifar10
+dataset=imagenet2012_t3
 srand=0
 reporting_email=
 affix=_aug_1a
@@ -40,7 +40,7 @@ fi
 
 dir=exp/cnn${affix}_${dataset}
 
-egs=exp/${dataset}_egs
+egs=exp/egs
 
 if [ ! -d $egs ]; then
   echo "$0: expected directory $egs to exist.  Run the get_egs.sh commands in the"
@@ -72,25 +72,23 @@ if [ $stage -le 1 ]; then
   # Note: we hardcode in the CNN config that we are dealing with 32x3x color
   # images.
 
-  common="required-time-offsets=0 height-offsets=-1,0,1 num-filters-out=32"
-
   mkdir -p $dir/configs
   cat <<EOF > $dir/configs/network.xconfig
-  input dim=96 name=input
-  conv-relu-batchnorm-layer name=cnn1 height-in=32 height-out=32 time-offsets=-1,0,1 $common
-  conv-relu-batchnorm-layer name=cnn2 height-in=32 height-out=32 time-offsets=-1,0,1 $common
-  conv-relu-batchnorm-layer name=cnn3 height-in=32 height-out=32 time-offsets=-1,0,1 $common
-  conv-relu-batchnorm-layer name=cnn4 height-in=32 height-out=16 time-offsets=-1,0,1 $common height-subsample-out=2
-  conv-relu-batchnorm-layer name=cnn5 height-in=16 height-out=16 time-offsets=-2,0,2 $common
-  conv-relu-batchnorm-layer name=cnn6 height-in=16 height-out=16 time-offsets=-2,0,2 $common
-  conv-relu-batchnorm-layer name=cnn7 height-in=16 height-out=8  time-offsets=-2,0,2 $common height-subsample-out=2
-  conv-relu-batchnorm-layer name=cnn8 height-in=8 height-out=8   time-offsets=-4,0,4 $common
-  conv-relu-batchnorm-layer name=cnn9 height-in=8 height-out=8   time-offsets=-4,0,4 $common
-  conv-relu-batchnorm-layer name=cnn10 height-in=8 height-out=4   time-offsets=-4,0,4 $common height-subsample-out=2
-  conv-relu-batchnorm-layer name=cnn11 height-in=4 height-out=4   time-offsets=-8,0,8 $common
-  conv-relu-batchnorm-layer name=cnn12 height-in=4 height-out=4   time-offsets=-8,0,8 $common
-  relu-batchnorm-layer name=fully_connected1 input=Append(0,8,16,24) dim=128
-  relu-batchnorm-layer name=fully_connected2 dim=256
+  input dim=672 name=input
+  conv-relu-batchnorm-layer name=cnn1 height-in=224 height-out=224 time-offsets=-3,-2,-1,0,1,2,3 required-time-offsets=0 height-offsets=-3,-2,-1,0,1,2,3 num-filters-out=96
+  conv-relu-batchnorm-layer name=cnn2 height-in=224 height-out=224 time-offsets=-3,-2,-1,0,1,2,3 required-time-offsets=0 height-offsets=-3,-2,-1,0,1,2,3 num-filters-out=96
+  conv-relu-batchnorm-layer name=cnn3 height-in=224 height-out=224 time-offsets=-3,-2,-1,0,1,2,3 required-time-offsets=0 height-offsets=-3,-2,-1,0,1,2,3 num-filters-out=96
+  conv-relu-batchnorm-layer name=cnn4 height-in=224 height-out=112 time-offsets=-3,-2,-1,0,1,2,3 required-time-offsets=0 height-offsets=-3,-2,-1,0,1,2,3 num-filters-out=96 height-subsample-out=2
+  conv-relu-batchnorm-layer name=cnn5 height-in=112 height-out=112 time-offsets=-2,-1,0,1,2 required-time-offsets=0 height-offsets=-2,-1,0,1,2 num-filters-out=256
+  conv-relu-batchnorm-layer name=cnn6 height-in=112 height-out=112 time-offsets=-2,-1,0,1,2 required-time-offsets=0 height-offsets=-2,-1,0,1,2 num-filters-out=256
+  conv-relu-batchnorm-layer name=cnn7 height-in=112 height-out=56  time-offsets=-2,-1,0,1,2 required-time-offsets=0 height-offsets=-2,-1,0,1,2 num-filters-out=256 height-subsample-out=2
+  conv-relu-batchnorm-layer name=cnn8 height-in=56 height-out=56   time-offsets=-1,0,1 required-time-offsets=0 height-offsets=-1,0,1 num-filters-out=512
+  conv-relu-batchnorm-layer name=cnn9 height-in=56 height-out=56   time-offsets=-1,0,1 required-time-offsets=0 height-offsets=-1,0,1 num-filters-out=512
+  conv-relu-batchnorm-layer name=cnn10 height-in=56 height-out=28   time-offsets=-1,0,1 required-time-offsets=0 height-offsets=-1,0,1 num-filters-out=512 height-subsample-out=2
+  conv-relu-batchnorm-layer name=cnn11 height-in=28 height-out=28   time-offsets=-1,0,1 required-time-offsets=0 height-offsets=-1,0,1 num-filters-out=512
+  conv-relu-batchnorm-layer name=cnn12 height-in=28 height-out=28   time-offsets=-1,0,1 required-time-offsets=0 height-offsets=-1,0,1 num-filters-out=512
+  relu-batchnorm-layer name=fully_connected1 input=Append(0,16,32,48,64,80,96,112,128,144,160,176,192,208) dim=512
+  relu-batchnorm-layer name=fully_connected2 dim=512
   output-layer name=output dim=$num_targets
 EOF
   steps/nnet3/xconfig_to_configs.py --xconfig-file $dir/configs/network.xconfig --config-dir $dir/configs/
@@ -100,18 +98,19 @@ fi
 if [ $stage -le 2 ]; then
 
   steps/nnet3/train_raw_dnn.py --stage=$train_stage \
-    --cmd="$train_cmd" \
+    --cmd="$cmd" \
     --image.augmentation-opts="--horizontal-flip-prob=0.5 --num-channels=3 \
-                               --crop=true --crop-size=32 --crop-scale-min=32 --crop-scale-max=56" \
+                               --crop=true --crop-size=224 --crop-scale-min=256 --crop-scale-max=256" \
     --trainer.srand=$srand \
     --trainer.max-param-change=2.0 \
     --trainer.num-epochs=30 \
     --egs.frames-per-eg=1 \
     --trainer.optimization.num-jobs-initial=1 \
-    --trainer.optimization.num-jobs-final=2 \
+    --trainer.optimization.num-jobs-final=5 \
     --trainer.optimization.initial-effective-lrate=0.0003 \
     --trainer.optimization.final-effective-lrate=0.00003 \
-    --trainer.optimization.minibatch-size=256,128,64 \
+    --trainer.optimization.minibatch-size=16,8 \
+    --compute-prob-minibatch-size="1:32" \
     --trainer.shuffle-buffer-size=2000 \
     --egs.dir="$egs" \
     --use-gpu=true \

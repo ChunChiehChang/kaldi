@@ -12,6 +12,9 @@
 import argparse
 import sys
 
+from signal import signal, SIGPIPE, SIG_DFL
+signal(SIGPIPE,SIG_DFL) 
+
 parser = argparse.ArgumentParser(description="""Select the image matrix for
          the eg specified by img_id. For purposes of viewing/debugging.""")
 parser.add_argument('img_id', type=str, default=None,

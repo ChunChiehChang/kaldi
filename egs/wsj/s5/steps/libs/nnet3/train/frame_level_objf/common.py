@@ -232,8 +232,7 @@ def train_one_iteration(dir, iter, srand, egs_dir,
         # Runs in the background
         compute_progress(dir=dir, iter=iter, egs_dir=egs_dir,
                          run_opts=run_opts,
-                         get_raw_nnet_from_am=get_raw_nnet_from_am,
-                         compute_prob_minibatch_size_str=compute_prob_minibatch_size_str)
+                         get_raw_nnet_from_am=get_raw_nnet_from_am)
 
     do_average = (iter > 0)
 
