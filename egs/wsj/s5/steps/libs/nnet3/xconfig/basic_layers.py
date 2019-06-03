@@ -9,7 +9,6 @@ and some basic layer definitions.
 """
 
 from __future__ import print_function
-from __future__ import division
 import math
 import re
 import sys
@@ -442,7 +441,6 @@ class XconfigTrivialOutputLayer(XconfigLayerBase):
                             objective_type)))
         return ans
 
-
 class XconfigOutputLayer(XconfigLayerBase):
     """This class is for lines like
     'output-layer name=output dim=4257 input=Append(input@-1, input@0, input@1, ReplaceIndex(ivector, t, 0))'
@@ -666,6 +664,260 @@ class XconfigOutputLayer(XconfigLayerBase):
                 'objective={2}'.format(
                     self.name, cur_node, objective_type))
         configs.append(line)
+        return configs
+
+
+class XconfigOutputBagOfFeaturesLayer(XconfigLayerBase):
+    """This class is for lines like
+    'output-layer name=output dim=4257 input=Append(input@-1, input@0, input@1, ReplaceIndex(ivector, t, 0))'
+    By default this includes a log-softmax component.  The parameters are
+    initialized to zero, as this empirically tends to be the best approach for output layers.
+
+    Parameters of the class, and their defaults:
+        input='[-1]'    :   Descriptor giving the input of the layer.
+        dim=None    :   Output dimension of layer, will normally equal the number of pdfs.
+        bottleneck-dim=None    :   Bottleneck dimension of layer: if supplied, instead of
+                        an affine component we'll have a linear then affine, so a linear
+                        bottleneck, with the linear part constrained to be orthonormal.
+        include-log-softmax=true    :   setting it to false will omit the
+            log-softmax component- useful for chain models.
+        objective-type=linear   :   the only other choice currently is
+            'quadratic', for use in regression problems
+        learning-rate-factor=1.0    :   Learning rate factor for the final
+            affine component, multiplies the standard learning rate. normally
+            you'll leave this as-is, but for xent regularization output layers
+            for chain models you'll want to set
+            learning-rate-factor=(0.5/xent_regularize),
+            normally learning-rate-factor=5.0 since xent_regularize is
+            normally 0.1.
+        max-change=1.5 :  Can be used to change the max-change parameter in the
+            affine component; this affects how much the matrix can change on each
+            iteration.
+        l2-regularize=0.0:  Set this to a nonzero value (e.g. 1.0e-05) to
+            add l2 regularization on the parameter norm for the affine component.
+        output-delay=0    :  Can be used to shift the frames on the output, equivalent
+             to delaying labels by this many frames (positive value increases latency
+             in online decoding but may help if you're using unidirectional LSTMs.
+        ng-affine-options=''  :   Can be used supply non-default options to the affine
+             layer (intended for the natural gradient but can be an arbitrary string
+             to be added to the config line.  e.g. 'update-period=2'.).
+        ng-linear-options=''  :   Options, like ng-affine-options, that are passed to
+             the LinearComponent, only in bottleneck layers (i.e. if bottleneck-dim
+             is supplied).
+    """
+
+    def __init__(self, first_token, key_to_value, prev_names=None):
+
+        assert first_token == 'output-layer-bag-of-features'
+        XconfigLayerBase.__init__(self, first_token, key_to_value, prev_names)
+
+    def set_default_configs(self):
+        # note: self.config['input'] is a descriptor, '[-1]' means output
+        # the most recent layer.
+        self.config = {'input': '[-1]',
+                       'dim': -1,
+                       'bottleneck-dim': -1,
+                       'orthonormal-constraint': 1.0,
+                            # orthonormal-constraint only matters if bottleneck-dim is set.
+                       'include-log-softmax': True,
+                            # this would be false for chain models
+                       'objective-type': 'linear',
+                            # see Nnet::ProcessOutputNodeConfigLine in
+                            # nnet-nnet.cc for other options
+                       'output-delay': 0,
+                       'ng-affine-options': '',
+                       'ng-linear-options': '',    # only affects bottleneck output layers.
+
+                       # The following are just passed through to the affine
+                       # component, and (in the bottleneck case) the linear
+                       # component.
+                       'learning-rate-factor': '',  # effective default: 1.0
+                       'l2-regularize': '',         # effective default: 0.0
+                       'max-change': 1.5,
+
+                       # The following are passed through to the affine component only.
+                       # It tends to be beneficial to initialize the output layer with
+                       # zero values, unlike the hidden layers.
+                       'param-stddev': 0.0,
+                       'bias-stddev': 0.0,
+
+                       # Fixed Affine layer for bag of features.
+                       'affine-transform-file': '',
+                       'bof-input-dim': '',
+                       'bof-output-dim': '',
+                      }
+
+    def check_configs(self):
+        if self.config['dim'] <= -1:
+            raise RuntimeError("In output-layer, dim has invalid value {0}"
+                               "".format(self.config['dim']))
+
+        if self.config['objective-type'] != 'linear' and \
+                self.config['objective-type'] != 'quadratic':
+            raise RuntimeError("In output-layer, objective-type has"
+                               " invalid value {0}"
+                               "".format(self.config['objective-type']))
+
+        if self.config['orthonormal-constraint'] <= 0.0:
+            raise RuntimeError("output-layer does not support negative (floating) "
+                               "orthonormal constraint; use a separate linear-component "
+                               "followed by batchnorm-component.")
+
+        if self.config['affine-transform-file'] is None:
+            raise RuntimeError("affine-transform-file must be set.")
+
+        if self.config['bof-input-dim'] is None:
+            raise RuntimeError("bof-input-dim must be set")
+
+        if self.config['bof-output-dim'] is None:
+            raise RuntimeError("bof-output-dim must be set")
+
+    def auxiliary_outputs(self):
+        auxiliary_outputs = ['affine']
+        if self.config['include-log-softmax']:
+            auxiliary_outputs.append('log-softmax')
+
+        return auxiliary_outputs
+
+    def output_name(self, auxiliary_output=None):
+        if auxiliary_output is None:
+            # Note: nodes of type output-node in nnet3 may not be accessed in
+            # Descriptors, so calling this with auxiliary_outputs=None doesn't
+            # make sense.
+            raise RuntimeError("Outputs of output-layer may not be used by other"
+                               " layers")
+
+        if auxiliary_output in self.auxiliary_outputs():
+            return '{0}.{1}'.format(self.name, auxiliary_output)
+        else:
+            raise RuntimeError("Unknown auxiliary output name {0}"
+                               "".format(auxiliary_output))
+
+    def output_dim(self, auxiliary_output=None):
+        if auxiliary_output is None:
+            # Note: nodes of type output-node in nnet3 may not be accessed in
+            # Descriptors, so calling this with auxiliary_outputs=None doesn't
+            # make sense.
+            raise RuntimeError("Outputs of output-layer may not be used by other"
+                               " layers")
+        return self.config['dim']
+
+    def get_full_config(self):
+        ans = []
+        config_lines = self._generate_config()
+
+        #for line in config_lines:
+        #    for config_name in ['ref', 'final']:
+        #        # we do not support user specified matrices in LSTM initialization
+        #        # so 'ref' and 'final' configs are the same.
+        #        ans.append((config_name, line))
+        #return ans
+
+        return config_lines
+
+
+    def _generate_config(self):
+        configs = []
+
+        # note: each value of self.descriptors is (descriptor, dim,
+        # normalized-string, output-string).
+        # by 'descriptor_final_string' we mean a string that can appear in
+        # config-files, i.e. it contains the 'final' names of nodes.
+        descriptor_final_string = self.descriptors['input']['final-string']
+        input_dim = self.descriptors['input']['dim']
+        output_dim = self.config['dim']
+        bottleneck_dim = self.config['bottleneck-dim']
+        objective_type = self.config['objective-type']
+        include_log_softmax = self.config['include-log-softmax']
+        output_delay = self.config['output-delay']
+        transform_file = self.config['affine-transform-file']
+
+        affine_options = self.config['ng-affine-options']
+        for opt in [ 'learning-rate-factor', 'l2-regularize', 'max-change',
+                     'param-stddev', 'bias-stddev' ]:
+            if self.config[opt] != '':
+                affine_options += ' {0}={1}'.format(opt, self.config[opt])
+
+        cur_node = descriptor_final_string
+        cur_dim = input_dim
+
+        if bottleneck_dim >= 0:
+            if bottleneck_dim == 0 or bottleneck_dim >= input_dim or bottleneck_dim >= output_dim:
+                raise RuntimeError("Bottleneck dim has value that does not make sense: {0}".format(
+                    bottleneck_dim))
+            # This is the bottleneck case (it doesn't necessarily imply we
+            # will be using the features from the bottleneck; it's just a factorization
+            # of the matrix into two pieces without a nonlinearity in between).
+            # We don't include the l2-regularize option because it's useless
+            # given the orthonormality constraint.
+            linear_options = self.config['ng-linear-options']
+            for opt in [ 'learning-rate-factor', 'l2-regularize', 'max-change' ]:
+                if self.config[opt] != '':
+                    linear_options += ' {0}={1}'.format(opt, self.config[opt])
+
+
+            # note: by default the LinearComponent uses natural gradient.
+            line = ('component name={0}.linear type=LinearComponent '
+                    'orthonormal-constraint={1} param-stddev={2} '
+                    'input-dim={3} output-dim={4} max-change=0.75 {5}'
+                    ''.format(self.name, self.config['orthonormal-constraint'],
+                              self.config['orthonormal-constraint'] / math.sqrt(input_dim),
+                              input_dim, bottleneck_dim, linear_options))
+            configs.append(line)
+            line = ('component-node name={0}.linear component={0}.linear input={1}'
+                    ''.format(self.name, cur_node))
+            configs.append(line)
+            cur_node = '{0}.linear'.format(self.name)
+            cur_dim = bottleneck_dim
+
+
+        line = ('component name={0}.affine'
+                ' type=NaturalGradientAffineComponent'
+                ' input-dim={1} output-dim={2} {3}'
+                ''.format(self.name, cur_dim, self.config['bof-input-dim'], affine_options))
+        configs.append(('final', line))
+        configs.append(('ref', line))
+        line = ('component-node name={0}.affine'
+                ' component={0}.affine input={1}'
+                ''.format(self.name, cur_node))
+        configs.append(('final', line))
+        configs.append(('ref', line))
+        cur_node = '{0}.affine'.format(self.name)
+
+        line = 'component name={0}.fixed-affine type=FixedAffineComponent matrix={1}'.format(
+            self.name, transform_file)
+        configs.append(('final', line))
+        line = 'component name={0}.fixed-affine type=FixedAffineComponent input-dim={1} output-dim={2}'.format(
+            self.name, self.config['bof-input-dim'], self.config['bof-output-dim'])
+        configs.append(('ref', line))
+        line = 'component-node name={0}.fixed-affine component={0}.fixed-affine input={1}'.format(
+            self.name, cur_node)
+        cur_node = '{0}.fixed-affine'.format(self.name)
+        configs.append(('final', line))
+        configs.append(('ref', line))
+
+        if include_log_softmax:
+            line = ('component name={0}.log-softmax'
+                    ' type=LogSoftmaxComponent dim={1}'
+                    ''.format(self.name, output_dim))
+            configs.append(('final', line))
+            configs.append(('ref', line))
+
+            line = ('component-node name={0}.log-softmax'
+                    ' component={0}.log-softmax input={1}'
+                    ''.format(self.name, cur_node))
+            configs.append(('final', line))
+            configs.append(('ref', line))
+            cur_node = '{0}.log-softmax'.format(self.name)
+
+        if output_delay != 0:
+            cur_node = 'Offset({0}, {1})'.format(cur_node, output_delay)
+
+        line = ('output-node name={0} input={1} '
+                'objective={2}'.format(
+                    self.name, cur_node, objective_type))
+        configs.append(('final', line))
+        configs.append(('ref', line))
         return configs
 
 
