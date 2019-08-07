@@ -5,12 +5,11 @@
 
 # ./local/chain/compare_wer.sh exp_yomdle_chinese/chain/e2e_cnn_1a exp_yomdle_chinese/chain/cnn_e2eali_1b
 # System                      e2e_cnn_1a cnn_e2eali_1b
-# WER                             63.19     53.67
-# CER                             19.01     12.86
-# Final train prob               0.2908   -0.0455
-# Final valid prob               0.2397   -0.0531
-# Final train prob (xent)                 -0.9753
-# Final valid prob (xent)                 -1.0559
+# CER                             15.44     13.57
+# Final train prob               0.0616   -0.0512
+# Final valid prob               0.0390   -0.0718
+# Final train prob (xent)                 -0.6199
+# Final valid prob (xent)                 -0.7448
 
 set -e -o pipefail
 
@@ -107,17 +106,25 @@ if [ $stage -le 3 ]; then
   steps/nnet3/chain/build_tree.sh \
     --frame-subsampling-factor $frame_subsampling_factor \
     --alignment-subsampling-factor 1 \
-    --context-opts "--context-width=2 --central-position=1" \
+    --context-opts "--context-width=1 --central-position=0" \
     --cmd "$cmd" $num_leaves ${train_data_dir} \
     $lang $ali_dir $tree_dir
 fi
 
 
 if [ $stage -le 4 ]; then
+  local/create_decomposition_matrix.sh --decomposition-table $data_dir/local/dict/cj5-cc.txt \
+    --lang-dir $lang \
+    --tree-dir $tree_dir
   mkdir -p $dir
   echo "$0: creating neural net configs using the xconfig parser";
   num_targets=$(tree-info $tree_dir/tree | grep num-pdfs | awk '{print $2}')
-  learning_rate_factor=$(echo "print (0.5/$xent_regularize)" | python)
+  learning_rate_factor=$(echo "print 0.5/$xent_regularize" | python)
+  
+  bof_input=$(cat $tree_dir/decomp.dim | awk '{print $1}')
+  bof_input=$(($bof_input - 1))
+  bof_output=$(cat $tree_dir/decomp.dim | awk '{print $2}')
+  
   cnn_opts="l2-regularize=0.075"
   tdnn_opts="l2-regularize=0.075"
   output_opts="l2-regularize=0.1"
@@ -143,7 +150,8 @@ if [ $stage -le 4 ]; then
 
   ## adding the layers for chain branch
   relu-batchnorm-layer name=prefinal-chain dim=$tdnn_dim target-rms=0.5 $tdnn_opts
-  output-layer name=output include-log-softmax=false dim=$num_targets max-change=1.5 $output_opts
+  ##output-layer name=output include-log-softmax=false dim=$num_targets max-change=1.5 $output_opts
+  output-layer-bag-of-features name=output include-log-softmax=false dim=$num_targets bof-input-dim=$bof_input bof-output-dim=$bof_output affine-transform-file=$tree_dir/decomp.mat $output_opts
 
   # adding the layers for xent branch
   # This block prints the configs for a separate output that will be
@@ -155,7 +163,8 @@ if [ $stage -le 4 ]; then
   # constant; and the 0.5 was tuned so as to make the relative progress
   # similar in the xent and regular final layers.
   relu-batchnorm-layer name=prefinal-xent input=tdnn3 dim=$tdnn_dim target-rms=0.5 $tdnn_opts
-  output-layer name=output-xent dim=$num_targets learning-rate-factor=$learning_rate_factor max-change=1.5 $output_opts
+  ##output-layer name=output-xent dim=$num_targets learning-rate-factor=$learning_rate_factor max-change=1.5 $output_opts
+  output-layer-bag-of-features name=output-xent dim=$num_targets bof-input-dim=$bof_input bof-output-dim=$bof_output affine-transform-file=$tree_dir/decomp.mat max-change=1.5 $output_opts
 EOF
   steps/nnet3/xconfig_to_configs.py --xconfig-file $dir/configs/network.xconfig --config-dir $dir/configs/
 fi
@@ -181,14 +190,14 @@ if [ $stage -le 5 ]; then
     --chain.right-tolerance 3 \
     --trainer.srand=$srand \
     --trainer.max-param-change=2.0 \
-    --trainer.num-epochs=6 \
+    --trainer.num-epochs=16 \
     --trainer.frames-per-iter=1000000 \
-    --trainer.optimization.num-jobs-initial=4 \
-    --trainer.optimization.num-jobs-final=8 \
+    --trainer.optimization.num-jobs-initial=6 \
+    --trainer.optimization.num-jobs-final=10 \
     --trainer.optimization.initial-effective-lrate=0.001 \
     --trainer.optimization.final-effective-lrate=0.0001 \
     --trainer.optimization.shrink-value=1.0 \
-    --trainer.num-chunk-per-minibatch=16,8 \
+    --trainer.num-chunk-per-minibatch=8,4 \
     --trainer.optimization.momentum=0.0 \
     --egs.chunk-width=$chunk_width \
     --egs.chunk-left-context=$chunk_left_context \

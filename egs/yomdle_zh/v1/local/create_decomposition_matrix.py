@@ -14,6 +14,7 @@
 import argparse
 import os
 import sys
+import math
 import numpy as np
 from scipy import misc
 
@@ -46,6 +47,7 @@ def write_kaldi_matrix(f, matrix):
 decomp_dict = {}
 #Stores unique graphemes from BPE
 graphemes = {}
+grapheme_count = {}
 num_graphemes = 0
 #Stores grapheme sequences to avoid repeats
 #and disambiguate
@@ -59,14 +61,16 @@ with open(args.decomp_path, 'r', encoding='utf8') as f:
         character = line.split()[-1]
         keystrokes = line.split()[:-1]
         if not ''.join(keystrokes).startswith('yyy') and not ''.join(keystrokes).startswith('z'):
-            #Normal input method
+            #Input method
             for key in keystrokes:
                 if key not in graphemes:
                     graphemes[key] = num_graphemes
                     num_graphemes = num_graphemes + 1
+                    grapheme_count[graphemes[key]] = 0
+                grapheme_count[graphemes[key]] = grapheme_count[graphemes[key]] + 1
             decomp_dict[character] = [graphemes[x] for x in keystrokes]
             #Handle cases where characters have same decomposition
-            bag_of_features = [value+'_b' if index==0 else value+'_e' if index==len(keystrokes)-1 else value+'_m' for (index,value) in enumerate(keystrokes)]
+            bag_of_features = [value for (index,value) in enumerate(keystrokes)]
             bag_of_features_list.append(set(bag_of_features))
             decomp_dict_disambig[character] = bag_of_features_list.count(set(bag_of_features)) - 1
             if bag_of_features_list.count(set(bag_of_features)) > num_disambig:
@@ -75,31 +79,31 @@ with open(args.decomp_path, 'r', encoding='utf8') as f:
 
 phone_dict = {}
 num_phones = 0
-num_pdfclass = 1
-max_pdfclass = 1
-total_characters = 0
+num_pdfclass = 0
+max_pdfclass = 0
+total_pdf = 0
 prev_phone = ''
 with open(args.phones_path, encoding='utf8') as f:
     for line in f:
         line = line.strip()
         phone = line.split()[0]
         num = line.split()[1]
-        if phone not in decomp_dict:
-            phone_dict[num] = [num_phones]
+        if phone not in phone_dict and phone not in decomp_dict:
+            phone_dict[phone] = [num_phones]
             num_phones = num_phones + 1
         if prev_phone == phone:
             num_pdfclass = num_pdfclass + 1
             if num_pdfclass > max_pdfclass:
                 max_pdfclass = num_pdfclass
         else:
-            num_pdfclass = 1
+            num_pdfclass = 0
+        total_pdf = total_pdf + 1
         prev_phone = phone
-        total_characters = total_characters + 1
 
 # plus one for the bias term for the fixed affine layer
-affine_decomp = np.zeros([num_phones + 3*num_graphemes + num_disambig + max_pdfclass + 1, total_characters], dtype=float)
-#affine_decomp = np.ones([num_phones + 3*num_graphemes + num_disambig + 1, total_characters], dtype=float)
-#affine_decomp = affine_decomp * 0.01
+#affine_decomp = np.zeros([num_phones + num_graphemes + num_disambig + max_pdfclass + 2, total_pdf], dtype=float)
+affine_decomp = np.random.rand(num_phones + num_graphemes + num_disambig + max_pdfclass + 2, total_pdf)
+affine_decomp = affine_decomp * 0.001
 prev_phone = ''
 num_pdfclass = 0
 with open(args.phones_path, encoding='utf8') as f:
@@ -107,29 +111,29 @@ with open(args.phones_path, encoding='utf8') as f:
         line = line.strip()
         phone = line.split()[0]
         num = line.split()[1]
-        indices = []
-        if num in phone_dict:
-            indices = phone_dict[num]
+        if phone in phone_dict:
+            affine_decomp[phone_dict[phone], int(num)] = 1.0
         elif phone in decomp_dict:
-            #Adds position dependency
-            indices = [(3*x + num_phones) for x in decomp_dict[phone]]
-            indices = [(x + 1) for x in indices]
-            indices[0] = indices[0] - 1
-            indices[-1] = indices[-1] + 1
-            #disambiguate
-            indices.append(num_phones + 3*num_graphemes + decomp_dict_disambig[phone])
-            if prev_phone == phone:
-                num_pdfclass = num_pdfclass + 1
-            else:
-                prev_phone = phone
-                num_pdfclass = 0
-            indices.append(num_phones + 3*num_graphemes + num_disambig + num_pdfclass)
-        for index in indices:
-            affine_decomp[index, int(num)] = 1.0
+            for index in decomp_dict[phone]:
+                affine_decomp[index + num_phones, int(num)] = 1.0 / math.sqrt(grapheme_count[index])
+            affine_decomp[num_phones + num_graphemes + decomp_dict_disambig[phone], int(num)] = 1.0
+        if prev_phone == phone:
+            num_pdfclass = num_pdfclass + 1
+        else:
+            prev_phone = phone
+            num_pdfclass = 0
+        affine_decomp[num_phones + num_graphemes + num_disambig + num_pdfclass, int(num)] = 1.0
+
+#print(phone_dict)
+#print(affine_decomp.shape)
+#print(affine_decomp.T)
+#print(len(np.unique(affine_decomp.T, axis=0)))
+#print(len(np.unique(affine_decomp, axis=0)))
 
 decomp_dim_path = os.path.join(args.out_dir, 'decomp.dim')
 decomp_mat_path = os.path.join(args.out_dir, 'decomp.mat')
 dim_fh = open(decomp_dim_path, 'w', encoding='utf8')
 mat_fh = sys.stdout
+np.save(os.path.join(args.out_dir, 'decomp'), np.transpose(affine_decomp))
 dim_fh.write(str(affine_decomp.shape[0]) + ' ' + str(affine_decomp.shape[1]) + '\n')
 write_kaldi_matrix(mat_fh, np.transpose(affine_decomp))

@@ -5,12 +5,11 @@
 
 # ./local/chain/compare_wer.sh exp_yomdle_chinese/chain/e2e_cnn_1a exp_yomdle_chinese/chain/cnn_e2eali_1b
 # System                      e2e_cnn_1a cnn_e2eali_1b
-# WER                             63.19     53.67
-# CER                             19.01     12.86
-# Final train prob               0.2908   -0.0455
-# Final valid prob               0.2397   -0.0531
-# Final train prob (xent)                 -0.9753
-# Final valid prob (xent)                 -1.0559
+# CER                             15.44     13.57
+# Final train prob               0.0616   -0.0512
+# Final valid prob               0.0390   -0.0718
+# Final train prob (xent)                 -0.6199
+# Final valid prob (xent)                 -0.7448
 
 set -e
 
@@ -26,10 +25,10 @@ affix=1a
 
 # training options
 tdnn_dim=450
-num_epochs=4
+num_epochs=14
 num_jobs_initial=4
 num_jobs_final=8
-minibatch_size=150=64,32/300=32,16/600=16,8/1200=8,4
+minibatch_size=150=32,16/300=16,8/600=8,4/1200=4,2
 common_egs_dir=
 l2_regularize=0.00005
 frames_per_iter=1000000
@@ -83,8 +82,14 @@ if [ $stage -le 1 ]; then
 fi
 
 if [ $stage -le 2 ]; then
+  local/create_decomposition_matrix.sh --decomposition-table $data_dir/local/dict/cj5-cc.txt \
+    --lang-dir $lang \
+    --tree-dir $treedir
   echo "$0: creating neural net configs using the xconfig parser";
   num_targets=$(tree-info $treedir/tree | grep num-pdfs | awk '{print $2}')
+  bof_input=$(cat $treedir/decomp.dim | awk '{print $1}')
+  bof_input=$(($bof_input - 1))
+  bof_output=$(cat $treedir/decomp.dim | awk '{print $2}')
   
   cnn_opts="l2-regularize=0.075"
   tdnn_opts="l2-regularize=0.075"
@@ -108,7 +113,8 @@ if [ $stage -le 2 ]; then
   relu-batchnorm-layer name=tdnn3 input=Append(-4,0,4) dim=$tdnn_dim $tdnn_opts
   ## adding the layers for chain branch
   relu-batchnorm-layer name=prefinal-chain dim=$tdnn_dim target-rms=0.5 $output_opts
-  output-layer name=output include-log-softmax=false dim=$num_targets max-change=1.5 $output_opts
+  ##output-layer name=output include-log-softmax=false dim=$num_targets max-change=1.5 $output_opts
+  output-layer-bag-of-features name=output include-log-softmax=false dim=$num_targets bof-input-dim=$bof_input bof-output-dim=$bof_output affine-transform-file=$treedir/decomp.mat
 EOF
 
   steps/nnet3/xconfig_to_configs.py --xconfig-file $dir/configs/network.xconfig --config-dir $dir/configs
@@ -136,8 +142,8 @@ if [ $stage -le 3 ]; then
     --trainer.optimization.momentum 0 \
     --trainer.optimization.num-jobs-initial $num_jobs_initial \
     --trainer.optimization.num-jobs-final $num_jobs_final \
-    --trainer.optimization.initial-effective-lrate 0.001 \
-    --trainer.optimization.final-effective-lrate 0.0001 \
+    --trainer.optimization.initial-effective-lrate 0.0005 \
+    --trainer.optimization.final-effective-lrate 0.00005 \
     --trainer.optimization.shrink-value 1.0 \
     --trainer.max-param-change 2.0 \
     --cleanup.remove-egs true \
