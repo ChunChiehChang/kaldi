@@ -311,9 +311,19 @@ class OnlineIvectorFeature: public OnlineFeatureInterface {
       const std::vector<std::pair<int32, BaseFloat> > &delta_weights);
 
  private:
-  // this function adds "weight" to the stats for frame "frame".
-  void UpdateStatsForFrame(int32 frame,
-                           BaseFloat weight);
+
+  // This accumulates i-vector stats for a set of frames, specified as pairs
+  // (t, weight).  The weights do not have to be positive.  (In the online
+  // silence-weighting that we do, negative weights can occur if we change our
+  // minds about the assignment of a frame as silence vs. non-silence).
+  void UpdateStatsForFrames(
+      const std::vector<std::pair<int32, BaseFloat> > &frame_weights);
+
+  // Returns a modified version of info_.min_post, which is opts_.min_post if
+  // weight is 1.0 or -1.0, but gets larger if fabs(weight) is small... but no
+  // larger than 0.99.  (This is an efficiency thing, to not bother processing
+  // very small counts).
+  BaseFloat GetMinPost(BaseFloat weight) const;
 
   // This is the original UpdateStatsUntilFrame that is called when there is
   // no data-weighting involved.
@@ -327,14 +337,16 @@ class OnlineIvectorFeature: public OnlineFeatureInterface {
 
   const OnlineIvectorExtractionInfo &info_;
 
-  // base_ is the base feature; it is not owned here.
-  OnlineFeatureInterface *base_;
-  // the following online-feature-extractor pointers are owned here:
-  OnlineSpliceFrames *splice_; // splice on top of raw features.
-  OnlineTransform *lda_;  // LDA on top of raw+splice features.
-  OnlineCmvn *cmvn_;
-  OnlineSpliceFrames *splice_normalized_; // splice on top of CMVN feats.
-  OnlineTransform *lda_normalized_;  // LDA on top of CMVN+splice
+  OnlineFeatureInterface *base_;  // The feature this is built on top of
+                                  // (e.g. MFCC); not owned here
+
+  OnlineFeatureInterface *lda_;  // LDA on top of raw+splice features.
+  OnlineCmvn *cmvn_;  // the CMVN that we give to the lda_normalized_.
+  OnlineFeatureInterface *lda_normalized_;  // LDA on top of CMVN+splice
+
+  // the following is the pointers to OnlineFeatureInterface objects that are
+  // owned here and which we need to delete.
+  std::vector<OnlineFeatureInterface*> to_delete_;
 
   /// the iVector estimation stats
   OnlineIvectorEstimationStats ivector_stats_;
@@ -461,20 +473,31 @@ class OnlineSilenceWeighting {
   void ComputeCurrentTraceback(const LatticeFasterOnlineDecoderTpl<FST> &decoder);
 
   // Calling this function gets the changes in weight that require us to modify
-  // the stats... the output format is (frame-index, delta-weight).  The
-  // num_frames_ready argument is the number of frames available at the input
-  // (or equivalently, output) of the online iVector extractor class, which may
-  // be more than the currently available decoder traceback.  How many frames
-  // of weights it outputs depends on how much "num_frames_ready" increased
-  // since last time we called this function, and whether the decoder traceback
-  // changed.  Negative delta_weights might occur if frames previously
+  // the stats... the output format is (frame-index, delta-weight).
+  //
+  // The num_frames_ready argument is the number of frames available at
+  // the input (or equivalently, output) of the online iVector feature in the
+  // feature pipeline from the stream start. It may be more than the currently
+  // available decoder traceback.
+  //
+  // The first_decoder_frame is the offset from the start of the stream in
+  // pipeline frames when decoder was restarted last time. We do not change
+  // weight for the frames earlier than first_decoder_frame. Set it to 0 in
+  // case of compilation error to reproduce the previous behavior or for a
+  // single utterance decoding.
+  //
+  // How many frames of weights it outputs depends on how much "num_frames_ready"
+  // increased since last time we called this function, and whether the decoder
+  // traceback changed.  Negative delta_weights might occur if frames previously
   // classified as non-silence become classified as silence if the decoder's
   // traceback changes.  You must call this function with "num_frames_ready"
   // arguments that only increase, not decrease, with time.  You would provide
   // this output to class OnlineIvectorFeature by calling its function
   // UpdateFrameWeights with the output.
+  //
+  // Returned frame-index is in pipeline frames from the pipeline start.
   void GetDeltaWeights(
-      int32 num_frames_ready_in,
+      int32 num_frames_ready, int32 first_decoder_frame,
       std::vector<std::pair<int32, BaseFloat> > *delta_weights);
 
  private:

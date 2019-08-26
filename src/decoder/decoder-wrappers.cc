@@ -34,7 +34,7 @@ DecodeUtteranceLatticeFasterClass::DecodeUtteranceLatticeFasterClass(
     DecodableInterface *decodable,
     const TransitionModel &trans_model,
     const fst::SymbolTable *word_syms,
-    std::string utt,
+    const std::string &utt,
     BaseFloat acoustic_scale,
     bool determinize,
     bool allow_partial,
@@ -382,7 +382,7 @@ bool DecodeUtteranceLatticeSimple(
       for (size_t i = 0; i < words.size(); i++) {
         std::string s = word_syms->Find(words[i]);
         if (s == "")
-          KALDI_ERR << "Word-id " << words[i] <<" not in symbol table.";
+          KALDI_ERR << "Word-id " << words[i] << " not in symbol table.";
         std::cerr << s << ' ';
       }
       std::cerr << '\n';
